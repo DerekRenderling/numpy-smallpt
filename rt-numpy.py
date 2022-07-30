@@ -1,10 +1,13 @@
 import numpy as np
 
-from math_tools import normalize
+from math_tools import normalize, to_byte
 from rng import RNG
 from sampling import cosine_weighted_sample_on_hemisphere
 from sphere import Sphere
 from specular import ideal_specular_reflect, ideal_specular_transmit
+
+import matplotlib.pyplot as plt   # plotting 
+
 
 # image I/O
 def write_ppm(w, h, Ls, fname = "numpy-image.ppm"):
@@ -30,7 +33,7 @@ class Rays(object):
 
 class Sphere(object):
 
-    EPSILON_SPHERE = 1e-4
+    EPSILON_SPHERE = 1e-4 # TODO!
 
     def __init__(self, r, p, e = np.zeros((3), dtype=np.float64), f = np.zeros((3), dtype=np.float64)):
         self.r = np.float64(r)
@@ -54,31 +57,16 @@ class Sphere(object):
         # <=> t = dop +- sqrt(D)
 
         op = self.p - rays.Os
-        dop = rays.Ds.dot(op)
-        D = dop * dop - op.dot(op) + self.r * self.r
-
-        breakpoint()
-
-        return False
-
-        if D < 0:
-            return False
-
-        sqrtD = np.sqrt(D)
-
-        tmin = dop - sqrtD
-        if (ray.tmin < tmin and tmin < ray.tmax):
-            ray.tmax = tmin
-            return True
-
-        tmax = dop + sqrtD
-        if (ray.tmin < tmax and tmax < ray.tmax):
-            ray.tmax = tmax
-            return True
+        dop = np.sum(rays.Ds * op, axis=1) #rays.Ds.dot(op)
+        D = dop * dop - np.sum(op * op, axis=1) + self.r * self.r #dop * dop - op.dot(op) + self.r * self.r
         
-        return False
+        sqrtD = np.where( D < 0, np.nan, np.sqrt(D) )
+        tmin = dop - sqrtD
+        tmax = dop + sqrtD
 
-
+        return np.where( D < 0, False, 
+                            np.where( np.logical_and(tmin >= self.EPSILON_SPHERE, tmin < np.inf), True, 
+                                np.where( np.logical_and(tmin >= self.EPSILON_SPHERE, tmax < np.inf), True, False ) ) )
 
 # Scene
 REFRACTIVE_INDEX_OUT = 1.0
@@ -164,8 +152,8 @@ if __name__ == "__main__":
     rng = RNG()
     nb_samples = 1 #int(sys.argv[1]) // 4 if len(sys.argv) > 1 else 1
 
-    w = 5 #1024
-    h = 3 #768
+    w = 1024
+    h = 768
 
     eye = np.array([50, 52, 295.6], dtype=np.float64)
     gaze = normalize(np.array([0, -0.042612, -1], dtype=np.float64))
@@ -179,43 +167,44 @@ if __name__ == "__main__":
     pixel_origins = np.zeros((w * h, 3))
     pixel_directions = np.zeros((w * h, 3))
     
+    if False:
+        for y in range(h):
+            # pixel row
+            print('\rRendering ({0} spp) {1:0.2f}%'.format(nb_samples, 100.0 * y / (h - 1)))
+            for x in range(w):
+                # pixel column
+                i = (h - 1 - y) * w + x
+                #i = y * w + x
+                L = np.zeros((3), dtype=np.float64)
+                for s in range(nb_samples):
+                    #  samples per subpixel
+                    u1 = 1.0 #2.0 * rng.uniform_float()
+                    u2 = 1.0 #2.0 * rng.uniform_float()
+                    dx = 0.0 #np.sqrt(u1) - 1.0 if u1 < 1 else 1.0 - np.sqrt(2.0 - u1)
+                    dy = 0.0 #np.sqrt(u2) - 1.0 if u2 < 1 else 1.0 - np.sqrt(2.0 - u2)
+                    d = cx * (((0 + 0.5 + dx) / 2.0 + x) / w - 0.5) + \
+                        cy * (((0 + 0.5 + dy) / 2.0 + y) / h - 0.5) + gaze
+                        
+                    pixel_origins[i, :] = eye + d * 130
+                    pixel_directions[i, :] = normalize(d)
+                    #L += radiance(Ray(eye + d * 130, normalize(d), tmin=Sphere.EPSILON_SPHERE), rng) * (1.0 / nb_samples)
+                #Ls[i,:] += 0.25 * np.clip(L, a_min=0.0, a_max=1.0)
 
-    for y in range(h):
-        # pixel row
-        print('\rRendering ({0} spp) {1:0.2f}%'.format(nb_samples, 100.0 * y / (h - 1)))
-        for x in range(w):
-            # pixel column
-            #i = (h - 1 - y) * w + x
-            i = y * w + x
-            L = np.zeros((3), dtype=np.float64)
-            for s in range(nb_samples):
-                #  samples per subpixel
-                u1 = 1.0 #2.0 * rng.uniform_float()
-                u2 = 1.0 #2.0 * rng.uniform_float()
-                dx = 0.0 #np.sqrt(u1) - 1.0 if u1 < 1 else 1.0 - np.sqrt(2.0 - u1)
-                dy = 0.0 #np.sqrt(u2) - 1.0 if u2 < 1 else 1.0 - np.sqrt(2.0 - u2)
-                d = cx * (((0 + 0.5 + dx) / 2.0 + x) / w - 0.5) + \
-                    cy * (((0 + 0.5 + dy) / 2.0 + y) / h - 0.5) + gaze
-                    
-                print(i)
-                pixel_origins[i, :] = eye + d * 130
-                pixel_directions[i, :] = normalize(d)
-                #L += radiance(Ray(eye + d * 130, normalize(d), tmin=Sphere.EPSILON_SPHERE), rng) * (1.0 / nb_samples)
-            #Ls[i,:] += 0.25 * np.clip(L, a_min=0.0, a_max=1.0)
-
-    eye_rays = Rays(pixel_origins, pixel_directions)
+        eye_rays = Rays(pixel_origins, pixel_directions)
     
+    # Vectorized eye ray generation
     i = np.arange( w * h )
     directions = cx * (((0 + 0.5 + 0.0) / 2.0 + (i[:,np.newaxis]%w)) / w - 0.5) + \
-                 cy * (((0 + 0.5 + 0.0) / 2.0 + np.floor(i[:,np.newaxis] / w) ) / h - 0.5) + gaze
-    
+                 cy * (((0 + 0.5 + 0.0) / 2.0 + (h - 1 - np.floor(i[:,np.newaxis] / w)) ) / h - 0.5) + gaze
     vectorized_origins = eye + directions * 130
-    #breakpoint()
-    
     norms = np.linalg.norm(directions, axis=1)
-    normed_directions = directions / norms[:,np.newaxis]
-    vectorized_directions = np.where( np.isclose( norms, 0)[:,np.newaxis], directions, normed_directions )
+    vectorized_directions = np.where( np.isclose( norms, 0)[:,np.newaxis], directions, directions / norms[:,np.newaxis] )
     vectorized_eye_rays = Rays(vectorized_origins, vectorized_directions)
+    
+    # vectorized scene intersection
+    Ls = spheres[0].intersect(vectorized_eye_rays)
+
+    Ls = np.where( Ls[:,np.newaxis] == True, np.array([1, 1, 1]), np.array([0, 0, 0]))
     breakpoint()
 
     write_ppm(w, h, Ls)
